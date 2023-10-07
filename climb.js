@@ -1,39 +1,3 @@
-/**
- * This is a climbing simulator game where the goal is to reach the top of the cliff.
- * The game consists of rounds where the player must choose a direction to move towards (L,M,R).
- * The player will receive in the terminal string representations of the climbing wall (up to 3 at time)
- * The player tries to move in the safest direction to maximize there chance of progressing.
- * Players will try to minimize the distance of their next grabbable hold (ex: 'o')
- * Ungrabbable holds appear as dashes (-).
- * The game has at least 10 levels before completion
- *
- * Example wall:
- * - - - - o - - - -
- * - - o - - - - - -
- * - o - - - - - - -
- * - - - - - - - - -
- * - o - - - - - - -
- * o - - - - - - - -
- * - - o - - - - - -
- * - o - - - - - - -
- * - o - - - - - - -
- *
- * If a player uses their right hand to grab a hold, then there left hand's default position is one slot to the left
- * A hand that contains a hold is represented in uppercase (ex: L)
- * A hand that does not contain a hold is seen in lowercase (ex: l)
- * Example:
- * Player grabs the hold with their right hand
- *  - o => l R
- *
- * The left hand can only grab holds less than or equal to 'REACH_DISTANCE' number of slots away
- *
- * Example of a valid reach (where REACH_DISTANCE == 4)
- * - o -       - L r
- * - - -  ==>  - - -
- * l R -       - o -
- *
- * The distance between R and L is sqrt(3^2 + 1^2)
- */
 
 // number constants
 const WALL_HEIGHT = 9;
@@ -45,6 +9,7 @@ const DISPLAY_HEIGHT = 3;
 // string constants
 const EMPTY_SLOT_CHAR = "-";
 const ROCKY_SLOT_CHAR = "o";
+const FAR_ROCKY_SLOT_CHAR = "Ø";
 const EMPTY_SPACE = "   ";
 const L_HAND_ON_CHAR = "L";
 const L_HAND_OFF_CHAR = "l";
@@ -109,7 +74,7 @@ function displayMap(map, displayHeight) {
   }
   clearConsole();
   partialMap.forEach((layer, index) => {
-    console.log(`${`${(map.length - index)}`.padStart(2, '  ')}   ${layer}`);
+    console.log(`${`${map.length - index}`.padStart(2, "  ")}   ${layer}`);
   });
 
   const array = [];
@@ -120,23 +85,57 @@ function displayMap(map, displayHeight) {
 }
 
 /**
- * TODO: Handle user input and game states
- * How to track user's hands on the wall?
- * Method of input? ex: L -> 1 -> 3
- *          1: - - o - - - - - -
- *          2: - - L - - - - - -
- * Show the next set of layers only when the user reaches the top-most visible layer
- * Should the game end automatically when no valid moves are available?
- *  OR, should we implement quick-time events for out of distance holds
- *          ex: ---*--()---- ❌
- *          ex: ------(*)--- ✅
- *
- * Should we allow players to swap hands for the same hold?
- *          1: - - - L - -
- *          2: - - - R - -
- *
- *
+ * @param {Array} map 2D ARRAY of MAP
+ * @param {object} currPosition dir, row, col
+ * @param {object} targetPosition dir, row col
+ * @returns boolean
  */
+function isValidMove(map, currPosition, targetPosition) {
+  // zero moves
+  if (!currPosition.length && targetPosition.row == map.length - 1) {
+    return true;
+  }
+
+  const dx =
+    currPosition.dir == L_HAND_ON_CHAR
+      ? targetPosition.col - currPosition.col - 1
+      : targetPosition.col - currPosition.col + 1;
+  const dy = currPosition.row - targetPosition.row;
+
+  if (currPosition.dir == L_HAND_ON_CHAR) {
+    // moving right hand
+    if (
+      targetPosition.dir == R_HAND_ON_CHAR ||
+      currPosition.altDir === L_HAND_ON_CHAR
+    ) {
+      if (dy == 0 && (dx == -2 || dx == -1 || dx == 1)) {
+        return true;
+      }
+      if ((Math.abs(dy) == 1 || Math.abs(dy) == 2) && (dx == -1 || dx == 0)) {
+        return true;
+      }
+    }
+  } else if (currPosition.dir == R_HAND_ON_CHAR) {
+    // moving left hand
+    if (
+      targetPosition.dir == L_HAND_ON_CHAR ||
+      currPosition.altDir === R_HAND_ON_CHAR
+    ) {
+      if (dy == 0 && (dx == 2 || dx == -1 || dx == 1)) {
+        return true;
+      }
+      if ((Math.abs(dy) == 1 || Math.abs(dy) == 2) && (dx == 1 || dx == 0)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// swap hands
+function swapHands(playerPosition) {
+  return playerPosition == L_HAND_ON_CHAR ? R_HAND_ON_CHAR : L_HAND_ON_CHAR
+}
 
 /**
  * Update the map based on the user input
@@ -145,39 +144,58 @@ function displayMap(map, displayHeight) {
  * @param {Array} playerPosition Last move
  */
 function updateMap(map, input, playerPosition) {
-  const options = input.split("");
-  const dir = options[0];
-  const row = map.length - parseInt(options[1]);
-  const col = parseInt(options[2]) - 1;
+  const noInput = (!input) // true when input is empty
 
-  playerPosition = [dir, row, col];
-  if (!playerPosition.length && row != map.length - 1) return; // User can only reach the first row
-  if (map[row][col] != ROCKY_SLOT_CHAR) return; // User cannot grab EMPTY SLOTS
+  const options = input.split("");
+  const dir = noInput ? swapHands(playerPosition.dir) : options[0];
+  const row = noInput ? playerPosition.row : (map.length - parseInt(options[1])); // normalized for array indexing
+  const col = noInput ? playerPosition.col : (parseInt(options[2]) - 1); // normalized for array indexing
+
+  // User cannot grab EMPTY SLOTS
+  if (map[row][col] != ROCKY_SLOT_CHAR) {
+    return { currentRow: map.length - playerPosition.row, lastMove: playerPosition };
+  } 
+
+  // check if valid move before
+  const targetPosition = { dir, row, col };
+  if (!isValidMove(map, playerPosition, targetPosition)) {
+    return { currentRow: map.length - playerPosition.row, lastMove: playerPosition };
+  }
+    
+  playerPosition = { dir, row, col }; // store the valid move
 
   switch (dir) {
-    case L_HAND_ON_CHAR:
+    case L_HAND_ON_CHAR: // moving left hand - L
       map[row][col] = dir;
-      map[row][col + 1] =
-        map[row][col + 1] === ROCKY_SLOT_CHAR
-          ? R_HAND_ON_CHAR
-          : R_HAND_OFF_CHAR;
+      const isRightHandOn = map[row][col + 1] === ROCKY_SLOT_CHAR;
+      map[row][col + 1] = isRightHandOn ? R_HAND_ON_CHAR : R_HAND_OFF_CHAR;
+      playerPosition = {
+        dir,
+        row,
+        col,
+        altDir: isRightHandOn ? R_HAND_ON_CHAR : null,
+      };
       break;
-    case R_HAND_ON_CHAR:
+    case R_HAND_ON_CHAR: // moving right hand - R
       map[row][col] = dir;
-      map[row][col - 1] =
-        map[row][col - 1] === ROCKY_SLOT_CHAR
-          ? L_HAND_ON_CHAR
-          : L_HAND_OFF_CHAR;
+      const isLeftHandOn = map[row][col - 1] === ROCKY_SLOT_CHAR;
+      map[row][col - 1] = isLeftHandOn ? L_HAND_ON_CHAR : L_HAND_OFF_CHAR;
+      playerPosition = {
+        dir,
+        row,
+        col,
+        altDir: isLeftHandOn ? L_HAND_ON_CHAR : null,
+      };
       break;
     default:
       break;
   }
 
-  return {currentRow: map.length - row, lastMove: playerPosition}
+  return { currentRow: map.length - row, lastMove: playerPosition };
 }
 
 const map = generateMap();
-let playerPosition = [];
+let playerPosition = {};
 let input = "";
 displayMap(map, DISPLAY_HEIGHT);
 
@@ -185,6 +203,7 @@ while (input !== "Q") {
   const mapCopy = _.cloneDeep(map);
   input = prompt("Enter (L/R # #): ").toUpperCase();
   if (input === "Q") continue;
-  const {currentRow, lastMove} = updateMap(mapCopy, input, playerPosition);
-  displayMap(mapCopy, currentRow + 2)
+  const { currentRow, lastMove } = updateMap(mapCopy, input, playerPosition);
+  playerPosition = lastMove;
+  displayMap(mapCopy, currentRow ? currentRow + 2 : DISPLAY_HEIGHT);
 }
